@@ -1,0 +1,31 @@
+name: build-exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install OCRA
+        run: gem install ocra
+
+      - name: Build exe
+        run: ocra sai.rb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sai-exe
+          path: "*.exe"
