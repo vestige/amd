@@ -12,17 +12,17 @@
   </style>
 </head>
 <body>
-  <h2>あみだくじ (Ruby.wasm)</h2>
+  <h2>AMD (Ruby.wasm)</h2>
 
   <div class="row">
     <label>COLS (3..10):</label>
     <input id="cols" type="number" min="3" max="10" value="5" />
-    <button id="btnNew">R (作り直し)</button>
+    <button id="btnNew">R (Rebuild)</button>
   </div>
 
   <div class="row">
-    <label>入力 (1..COLS):</label>
-    <input id="inp" placeholder="例: 3" />
+    <label>Input:</label>
+    <input id="inp" placeholder="ex: 3" />
     <button id="btnGo">GO</button>
     <button id="btnEnd">END</button>
   </div>
@@ -35,14 +35,12 @@
   <script type="text/ruby">
     require "js"
 
-    # ====== config ======
     DEFAULT_COLS = 5
     ROWS = 12
     H_CHARS = 3
     DENSITY = 0.35
     MIN_BARS_BETWEEN = 2
 
-    # ====== helpers ======
     def count_bars_between(con, cols)
       counts = Array.new(cols - 1, 0)
       con.each do |row|
@@ -72,10 +70,10 @@
 
       rows.times do |r|
         (cols - 1).times do |i|
-          next if i > 0 && con[r][i - 1]     # 隣接横棒禁止
+          next if i > 0 && con[r][i - 1]
           next if i < cols - 2 && con[r][i + 1]
 
-          con[r][i] = (rand < density)       # true/false を確率で決める
+          con[r][i] = (rand < density)
         end
       end
       con
@@ -86,7 +84,7 @@
         con = generate_connections(rows, cols, density: density)
 
         gap_counts = count_bars_between(con, cols)
-        next unless gap_counts.all? { |n| n >= min_bars_between } # 各“隙間”に最低本数
+        next unless gap_counts.all? { |n| n >= min_bars_between } 
         next unless all_columns_connected_at_least_once?(con, cols)
 
         return con
@@ -116,7 +114,6 @@
       [col, v_marks, h_marks]
     end
 
-    # ====== render to string (IMPORTANT: 上書き描画のため) ======
     def render_str(connections, cols, h_chars, v_marks: nil, h_marks: nil, goals: nil)
       buf = +""
       start_line = (1..cols).map { |n| n.to_s.center(1 + h_chars) }.join
@@ -160,7 +157,6 @@
       buf
     end
 
-    # ====== DOM wiring ======
     document = JS.global[:document]
     out  = document.getElementById("out")
     inp  = document.getElementById("inp")
@@ -182,7 +178,6 @@
     end
 
     def redraw(out, v_marks: nil, h_marks: nil)
-      # ★ここが“clear”相当：textContentを毎回上書きする
       out[:textContent] = render_str($connections, $cols, H_CHARS, v_marks: v_marks, h_marks: h_marks, goals: $goals)
     end
 
@@ -194,13 +189,11 @@
       $cols = n
     end
 
-    # 初期表示
     parse_cols!(cols_input)
     srand
     new_amida!
     redraw(out)
 
-    # R（作り直し）
     document.getElementById("btnNew").addEventListener("click") do
       next if $ended
       parse_cols!(cols_input)
@@ -208,7 +201,6 @@
       redraw(out)
     end
 
-    # GO（軌跡表示）
     document.getElementById("btnGo").addEventListener("click") do
       next if $ended
       n = inp[:value].to_i
@@ -227,7 +219,6 @@
       end
     end
 
-    # END
     document.getElementById("btnEnd").addEventListener("click") do
       $ended = true
       out[:textContent] << "\nEnd\n"
