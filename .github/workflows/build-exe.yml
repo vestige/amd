@@ -22,8 +22,11 @@ jobs:
       - name: Build exe
         run: ocran sai.rb
 
+      - name: Build exe
+        run: ocran amd_cui.rb
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sai-exe
+          name: exes
           path: "*.exe"
