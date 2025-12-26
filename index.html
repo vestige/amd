@@ -1,121 +1,237 @@
 <!doctype html>
-<html lang="ja">
+<html>
 <head>
-  <meta charset="utf-8">
-  <title>Amidakuji (Ruby.wasm)</title>
+  <meta charset="utf-8" />
+  <title>Amida (Ruby.wasm)</title>
   <style>
-    body {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      padding: 16px;
-    }
-    #screen {
-      white-space: pre;
-      border: 1px solid #ccc;
-      padding: 12px;
-      min-height: 20em;
-    }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    #out { white-space: pre; border: 1px solid #ccc; padding: 12px; border-radius: 8px; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+    input { width: 120px; padding: 6px; }
+    button { padding: 6px 10px; }
   </style>
-
-  <!-- ruby.wasm -->
-  <script src="https://cdn.jsdelivr.net/npm/@ruby/3.3-wasm-wasi@2.5.0/dist/browser.script.iife.js"></script>
 </head>
 <body>
+  <h2>あみだくじ (Ruby.wasm)</h2>
 
-<h1>あみだくじ（Ruby.wasm）</h1>
+  <div class="row">
+    <label>COLS (3..10):</label>
+    <input id="cols" type="number" min="3" max="10" value="5" />
+    <button id="btnNew">R (作り直し)</button>
+  </div>
 
-<div>
-  <input id="cmd" placeholder="1..5 / R / END">
-  <button id="run">実行</button>
-</div>
+  <div class="row">
+    <label>入力 (1..COLS):</label>
+    <input id="inp" placeholder="例: 3" />
+    <button id="btnGo">GO</button>
+    <button id="btnEnd">END</button>
+  </div>
 
-<pre id="screen"></pre>
+  <pre id="out"></pre>
 
-<script type="text/ruby">
-  require "js"
+  <!-- Ruby.wasm (IIFE) -->
+  <script src="https://cdn.jsdelivr.net/npm/@ruby/3.4-wasm-wasi@2.7.2/dist/browser.script.iife.js"></script> <!--  [oai_citation:1‡GitHub](https://github.com/ruby/ruby.wasm?utm_source=chatgpt.com) -->
 
-  # ========= 表示バッファ =========
-  $screen = ""
+  <script type="text/ruby">
+    require "js"
 
-  def draw(text)
-    $screen = text
-  end
+    # ====== config ======
+    DEFAULT_COLS = 5
+    ROWS = 12
+    H_CHARS = 3
+    DENSITY = 0.35
+    MIN_BARS_BETWEEN = 2
 
-  def screen
-    $screen
-  end
-
-  # ========= あみだロジック（超簡略版） =========
-  COLS = 5
-  ROWS = 8
-
-  def new_amida
-    @paths = Array.new(ROWS) { rand(COLS - 1) }
-    @goal = rand(COLS)
-  end
-
-  def render(path_marks: nil)
-    lines = []
-    lines << "START"
-    lines << " " + (1..COLS).map(&:to_s).join("   ")
-
-    ROWS.times do |r|
-      line = " "
-      COLS.times do |c|
-        line << (path_marks&.include?([r, c]) ? "*" : "|")
-        line << "---" if c < COLS - 1 && @paths[r] == c
-        line << "   " if c < COLS - 1 && @paths[r] != c
+    # ====== helpers ======
+    def count_bars_between(con, cols)
+      counts = Array.new(cols - 1, 0)
+      con.each do |row|
+        row.each_with_index { |has_bar, i| counts[i] += 1 if has_bar }
       end
-      lines << line
+      counts
     end
 
-    lines << "GOAL"
-    goals = Array.new(COLS, " ")
-    goals[@goal] = "O"
-    lines << " " + goals.join("   ")
-
-    lines.join("\n")
-  end
-
-  def handle(cmd)
-    cmd = cmd.strip.upcase
-    return draw("End") if cmd == "END"
-
-    if cmd == "R"
-      new_amida
-      return draw(render)
+    def count_total_bars(con)
+      con.sum { |row| row.count(true) }
     end
 
-    n = cmd.to_i
-    unless (1..COLS).include?(n)
-      return draw("input 1..#{COLS} / R / END\n\n" + render)
+    def column_has_any_connection?(con, col, cols)
+      con.any? do |row|
+        left  = (col > 0) && row[col - 1]
+        right = (col < cols - 1) && row[col]
+        left || right
+      end
     end
 
-    draw("Result: #{n}\n\n" + render)
-  end
+    def all_columns_connected_at_least_once?(con, cols)
+      cols.times.all? { |c| column_has_any_connection?(con, c, cols) }
+    end
 
-  # 初期化
-  new_amida
-  draw("input 1..#{COLS} / R / END\n\n" + render)
-</script>
+    def generate_connections(rows, cols, density: 0.35)
+      con = Array.new(rows) { Array.new(cols - 1, false) }
 
-<script>
-  const screen = document.getElementById("screen");
-  const input  = document.getElementById("cmd");
-  const btn    = document.getElementById("run");
+      rows.times do |r|
+        (cols - 1).times do |i|
+          next if i > 0 && con[r][i - 1]     # 隣接横棒禁止
+          next if i < cols - 2 && con[r][i + 1]
 
-  function redraw() {
-    // ★ ここが「クリアしてから描く」の正体
-    screen.textContent = RubyVM.eval("screen()");
-  }
+          con[r][i] = (rand < density)       # true/false を確率で決める
+        end
+      end
+      con
+    end
 
-  btn.onclick = () => {
-    RubyVM.eval(`handle(${JSON.stringify(input.value)})`);
-    input.value = "";
-    redraw();
-  };
+    def generate_connections_with_constraints(rows, cols, density:, min_bars_between:)
+      loop do
+        con = generate_connections(rows, cols, density: density)
 
-  redraw();
-</script>
+        gap_counts = count_bars_between(con, cols)
+        next unless gap_counts.all? { |n| n >= min_bars_between } # 各“隙間”に最低本数
+        next unless all_columns_connected_at_least_once?(con, cols)
 
+        return con
+      end
+    end
+
+    def compute_path(connections, start_col, cols)
+      col = start_col
+      v_marks = {}
+      h_marks = {}
+
+      connections.length.times do |r|
+        v_marks[[r, col]] = true
+
+        if col > 0 && connections[r][col - 1]
+          h_marks[[r, col - 1]] = true
+          col -= 1
+          v_marks[[r, col]] = true
+        elsif col < cols - 1 && connections[r][col]
+          h_marks[[r, col]] = true
+          col += 1
+          v_marks[[r, col]] = true
+        end
+      end
+
+      v_marks[[connections.length, col]] = true
+      [col, v_marks, h_marks]
+    end
+
+    # ====== render to string (IMPORTANT: 上書き描画のため) ======
+    def render_str(connections, cols, h_chars, v_marks: nil, h_marks: nil, goals: nil)
+      buf = +""
+      start_line = (1..cols).map { |n| n.to_s.center(1 + h_chars) }.join
+      buf << "START\n"
+      buf << " " + start_line + "\n"
+
+      connections.each_with_index do |row_con, r|
+        line = +" "
+        cols.times do |c|
+          on_path = v_marks && v_marks[[r, c]]
+          line << (on_path ? "*" : "|")
+
+          if c < cols - 1
+            if row_con[c]
+              h_on_path = h_marks && h_marks[[r, c]]
+              line << (h_on_path ? "*" * h_chars : "-" * h_chars)
+            else
+              line << " " * h_chars
+            end
+          end
+        end
+        buf << line + "\n"
+      end
+
+      last = +" "
+      cols.times do |c|
+        on_path = v_marks && v_marks[[connections.length, c]]
+        last << (on_path ? "*" : "|")
+        last << " " * h_chars if c < cols - 1
+      end
+      buf << last + "\n"
+
+      buf << "GOAL\n"
+      goal_line =
+        if goals
+          goals.map { |g| g.center(1 + h_chars) }.join
+        else
+          (1..cols).map { |n| n.to_s.center(1 + h_chars) }.join
+        end
+      buf << " " + goal_line + "\n"
+      buf
+    end
+
+    # ====== DOM wiring ======
+    document = JS.global[:document]
+    out  = document.getElementById("out")
+    inp  = document.getElementById("inp")
+    cols_input = document.getElementById("cols")
+
+    $cols = DEFAULT_COLS
+    $connections = nil
+    $atari_index = nil
+    $goals = nil
+    $ended = false
+
+    def new_amida!
+      $connections = generate_connections_with_constraints(
+        ROWS, $cols, density: DENSITY, min_bars_between: MIN_BARS_BETWEEN
+      )
+      $atari_index = rand($cols)
+      $goals = Array.new($cols) { " " }
+      $goals[$atari_index] = "O"
+    end
+
+    def redraw(out, v_marks: nil, h_marks: nil)
+      # ★ここが“clear”相当：textContentを毎回上書きする
+      out[:textContent] = render_str($connections, $cols, H_CHARS, v_marks: v_marks, h_marks: h_marks, goals: $goals)
+    end
+
+    def parse_cols!(cols_input)
+      n = cols_input[:value].to_i
+      n = DEFAULT_COLS if n == 0
+      n = [[n, 3].max, 10].min
+      cols_input[:value] = n
+      $cols = n
+    end
+
+    # 初期表示
+    parse_cols!(cols_input)
+    srand
+    new_amida!
+    redraw(out)
+
+    # R（作り直し）
+    document.getElementById("btnNew").addEventListener("click") do
+      next if $ended
+      parse_cols!(cols_input)
+      new_amida!
+      redraw(out)
+    end
+
+    # GO（軌跡表示）
+    document.getElementById("btnGo").addEventListener("click") do
+      next if $ended
+      n = inp[:value].to_i
+      if n < 1 || n > $cols
+        JS.global[:alert].call("1..#{$cols} を入力してね")
+        next
+      end
+
+      goal_col, v_marks, h_marks = compute_path($connections, n - 1, $cols)
+      redraw(out, v_marks: v_marks, h_marks: h_marks)
+
+      if goal_col == $atari_index
+        out[:textContent] << "\nResult: #{n}  ATARI!!\n"
+      else
+        out[:textContent] << "\nResult: #{n}  #{goal_col + 1}\n"
+      end
+    end
+
+    # END
+    document.getElementById("btnEnd").addEventListener("click") do
+      $ended = true
+      out[:textContent] << "\nEnd\n"
+    end
+  </script>
 </body>
 </html>
