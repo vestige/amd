@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amidakuji (Ruby.wasm)</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 16px; }
+    #out { white-space: pre; border: 1px solid #ccc; padding: 12px; min-height: 240px; }
+    input { width: 220px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@ruby/3.3-wasm-wasi@2.5.0/dist/browser.script.iife.js"></script>
+</head>
+<body>
+  <h1>amd(Ruby.wasm)</h1>
+
+  <div>
+    <input id="cmd" placeholder="1..5 / R / END" />
+    <button id="send">送信</button>
+  </div>
+
+  <div id="out"></div>
+
+  <script type="text/ruby">
+    require "js"
+
+    H_CHARS = 3
+
+    def generate_connections(rows, cols, density: 0.35)
+      con = Array.new(rows) { Array.new(cols - 1, false) }
+
+      rows.times do |r|
+        (cols - 1).times do |i|
+          next if i > 0 && con[r][i - 1]
+          next if i < cols - 2 && con[r][i + 1]
+          con[r][i] = (rand < density)
+        end
+      end
+      con
+    end
+
+    def count_total_bars(con)
+      con.sum { |row| row.count(true) }
+    end
+
+    def all_columns_connected_at_least_once?(con, cols)
+      hit = Array.new(cols, false)
+      con.each do |row|
+        row.each_with_index do |v, i|
+          if v
+            hit[i] = true
+            hit[i + 1] = true
+          end
+        end
+      end
+      hit.all?
+    end
+
+    def generate_connections_with_constraints(rows, cols, density:, min_total_bars:)
+      loop do
+        con = generate_connections(rows, cols, density: density)
+        next if count_total_bars(con) < min_total_bars
+        next unless all_columns_connected_at_least_once?(con, cols)
+        return con
+      end
+    end
+
+    def compute_path(connections, start_col, cols)
+      col = start_col
+      v_marks = {}
+      h_marks = {}
+
+      connections.length.times do |r|
+        v_marks[[r, col]] = true
+
+        if col > 0 && connections[r][col - 1]
+          h_marks[[r, col - 1]] = true
+          col -= 1
+          v_marks[[r, col]] = true
+        elsif col < cols - 1 && connections[r][col]
+          h_marks[[r, col]] = true
+          col += 1
+          v_marks[[r, col]] = true
+        end
+      end
+
+      v_marks[[connections.length, col]] = true
+      [col, v_marks, h_marks]
+    end
+
+    def render(connections, cols, h_chars, v_marks: nil, h_marks: nil, goals: nil)
+      out = +""
+      start_line = (1..cols).map { |n| n.to_s.center(1 + h_chars) }.join
+      out << "START\n"
+      out << " " + start_line + "\n"
+
+      connections.each_with_index do |row_con, r|
+        line = +" "
+        cols.times do |c|
+          on_path = v_marks && v_marks[[r, c]]
+          line << (on_path ? "*" : "|")
+
+          if c < cols - 1
+            if row_con[c]
+              h_on_path = h_marks && h_marks[[r, c]]
+              line << (h_on_path ? "*" * h_chars : "-" * h_chars)
+            else
+              line << " " * h_chars
+            end
+          end
+        end
+        out << line + "\n"
+      end
+
+      last = +" "
+      cols.times do |c|
+        on_path = v_marks && v_marks[[connections.length, c]]
+        last << (on_path ? "*" : "|")
+        last << " " * h_chars if c < cols - 1
+      end
+      out << last + "\n"
+
+      out << "GOAL\n"
+      if goals
+        goal_line = goals.map { |g| g.center(1 + h_chars) }.join
+        out << " " + goal_line + "\n"
+      else
+        out << " " + (1..cols).map { |n| n.to_s.center(1 + h_chars) }.join + "\n"
+      end
+
+      out
+    end
+
+    class AmidakujiApp
+      def initialize(cols: 5, rows: 12, density: 0.35)
+        @cols = cols
+        @rows = rows
+        @density = density
+        srand
+        rebuild
+      end
+
+      def rebuild
+        min_total_bars = 1
+        @connections = generate_connections_with_constraints(@rows, @cols, density: @density, min_total_bars: min_total_bars)
+
+        @atari_index = rand(@cols)
+        @goals = Array.new(@cols) { " " }
+        @goals[@atari_index] = "O"
+      end
+
+      def screen
+        render(@connections, @cols, H_CHARS, goals: @goals)
+      end
+
+      def handle(cmd)
+        s = cmd.strip
+        return ["", true] if s.upcase == "END"
+
+        if s.upcase == "R"
+          rebuild
+          return ["\n[REBUILD]\n" + screen, false]
+        end
+
+        n = s.to_i
+        unless (1..@cols).include?(n)
+          return ["\nPlease input 1-#{@cols} / R / END\n", false]
+        end
+
+        goal_col, v_marks, h_marks = compute_path(@connections, n - 1, @cols)
+        out = "\n" + render(@connections, @cols, H_CHARS, v_marks: v_marks, h_marks: h_marks, goals: @goals) + "\n"
+        out << (goal_col == @atari_index ? "Result: #{n}  ATARI!!\n" : "Result: #{n}  #{goal_col + 1}\n")
+        [out, false]
+      end
+    end
+
+    document = JS.global[:document]
+    out_el = document.getElementById("out")
+    cmd_el = document.getElementById("cmd")
+    btn = document.getElementById("send")
+
+    app = AmidakujiApp.new(cols: 5, rows: 12)
+
+    out_el[:textContent] = "input (1..5 / R / END)\n\n" + app.screen
+
+    send = proc do
+      text = cmd_el[:value].to_s
+      cmd_el[:value] = ""
+      msg, done = app.handle(text)
+      out_el[:textContent] = out_el[:textContent].to_s + msg
+      if done
+        out_el[:textContent] = out_el[:textContent].to_s + "\nEnd\n"
+        btn[:disabled] = true
+        cmd_el[:disabled] = true
+      end
+    end
+
+    btn.addEventListener("click") { send.call }
+    cmd_el.addEventListener("keydown") do |e|
+      send.call if e[:key].to_s == "Enter"
+    end
+  </script>
+</body>
+</html>
